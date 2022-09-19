@@ -1,0 +1,27 @@
+[package]
+name = "rustredis"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+build = "build.rs"
+
+[[bin]]
+name = "server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "client"
+path = "src/bin/client.rs"
+
+[dependencies]
+async-stream = "0.3.3"
+bitmaps = "3.2.0"
+bytes = "1.2.1"
+env_logger = "0.9.1"
+futures = "0.3.24"
+log = "0.4.17"
+rax = { git = "https://github.com/zouyalong-coder/rustrax", version = "0.1.5" }
+rustrdict = { git = "https://github.com/zouyalong-coder/rustrdict", version = "0.1.0" }
+tokio = { version = "1.21.1", features = ["full", "rt"] }
+tokio-stream = "0.1.9"
