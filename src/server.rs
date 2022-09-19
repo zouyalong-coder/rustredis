@@ -12,54 +12,9 @@ use tokio_stream::{StreamMap, StreamExt};
 use tokio_stream::Stream;
 
 use crate::{config::Config, frame::Command, error::Error};
+use crate::client::Client;
 use crate::error::Result;
 use async_stream::try_stream;
-
-struct Client {
-    id: u64,
-    stream: TcpStream,
-    // rs: ReadHalf<TcpStream>,
-    // ws: WriteHalf<TcpStream>,
-    buffer: BytesMut,
-}
-
-impl Client {
-    fn new(id: u64, stream: TcpStream) -> Self {
-        // let (rs, ws) = tio::split(stream);
-        Self { id, stream, buffer: BytesMut::new(), }
-    }
-
-    async fn read_command(&mut self) -> Option<Command> {
-        loop {
-            info!("read_command now");
-            if let Some(cmd) = self.parse_command() {
-                return Some(cmd);
-            }
-            if 0 == self.stream.read_buf(&mut self.buffer).await.unwrap() {
-                if self.buffer.is_empty() {
-                    return None;
-                } else {
-                    return Some(Command::Quit)
-                }
-            }
-        }
-    }
-
-    fn execute_command(&self, cmd: Command) {
-
-    }
-
-    fn parse_command(&mut self) -> Option<Command> {
-        if self.buffer.is_empty() {
-            return None;
-        }
-        let buf = self.buffer.to_vec();
-        // let mut buf = Cursor::new(&self.buffer[..]);
-        debug!("Got buf {:?}", buf);
-        self.buffer.advance(buf.len());
-        Some(Command::Get { key: unsafe{String::from_utf8_unchecked(buf) }})
-    }
-}
 
 
 pub struct Server {
