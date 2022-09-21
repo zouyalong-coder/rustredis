@@ -1,121 +1,108 @@
-use std::{io::{self}, pin::Pin};
-use std::io::Cursor;
-use futures::{select};
-use tokio::io::{self as tio, ReadHalf, WriteHalf, AsyncReadExt};
+use std::{sync::Arc};
+use tokio::{sync::Mutex, io::AsyncWriteExt};
 use log::{info, debug, warn};
-use bytes::{Bytes, Buf, BytesMut};
 
 
 use rax::RaxMap;
 use tokio::{runtime::{Runtime, self}, net::{TcpListener, TcpStream}};
-use tokio_stream::{StreamMap, StreamExt};
-use tokio_stream::Stream;
 
-use crate::{config::Config, frame::Command, error::Error};
+use crate::{config::Config, frame::Command};
 use crate::client::Client;
 use crate::error::Result;
-use async_stream::try_stream;
+
+struct IdGen {
+    id_slots: bitmaps::Bitmap<1024>,
+}
+
+impl IdGen {
+    fn new() -> Self {
+        let mut id_slots = bitmaps::Bitmap::new();
+        id_slots.set(0, true);
+        Self { id_slots }
+    }
+
+    fn new_id(&mut self) -> Option<u64> {
+        let id = self.id_slots.first_false_index().and_then(|id| Some(id as u64))?;
+        self.id_slots.set(id as usize, true);
+        if id > 1 {
+            return None
+        }
+        Some(id)
+    }
+
+    fn recycle_id(&mut self, id: u64) {
+        self.id_slots.set(id as usize, false);
+    }
+}
 
 
 pub struct Server {
-    // rt: Runtime,
+    rt: Runtime,
     addr: String,
     running: bool,
-    id_slots: bitmaps::Bitmap<1024>,
-    /// 当前连接的 clients
-    clients: RaxMap<u64, Client>,
-    streams: StreamMap<u64, Pin<Box<dyn Stream<Item = Command> + Send>>>,
+    id_gen: Arc<Mutex<IdGen>>,
+    // clients: RaxMap<u64, Client>,
+    // streams: StreamMap<u64, Pin<Box<dyn Stream<Item = (Command, &mut Client)>>>>,
 }
 
 impl Server {
     pub fn from_config(conf: &Config) -> Result<Self> {
-        let mut id_slots = bitmaps::Bitmap::new();
-        id_slots.set(0, true);
-        Ok(Self {
-            addr: conf.addr.clone(),
-            running: false,
-            id_slots,
-            clients: RaxMap::new(),
-            streams: StreamMap::new(),
-        })
-    }
-
-    fn new_client_id(&mut self) -> Option<u64> {
-        let id = self.id_slots.first_false_index().and_then(|id| Some(id as u64))?;
-        self.id_slots.set(id as usize, true);
-        Some(id)
-    }
-
-    fn bind_and_accept(addr: String) -> impl Stream<Item = io::Result<TcpStream>> {
-        try_stream! {
-            let listener = TcpListener::bind(addr).await?;
-    
-            loop {
-                let (stream, addr) = listener.accept().await?;
-                println!("received on {:?}", addr);
-                yield stream;
-            }
-        }
-    }
-
-    fn on_client_created(&mut self, stream: TcpStream) {
-        let id = self.new_client_id();
-        if id.is_none() {
-            warn!("too many client");
-            return;
-        }
-        let id = id.unwrap();
-        let mut client = Client::new(id, stream);
-        let rs: Pin<Box<dyn Stream<Item = Command> + Send>> = Box::pin(async_stream::stream! {
-            while let Some(cmd) = client.read_command().await {
-                yield cmd;
-            }
-        });
-        // self.clients.insert(id, Box::new(client));
-        self.streams.insert(id, rs);
-    }
-
-    fn handle_command(&mut self, client_id: u64, cmd: Command) {
-        debug!("client({}) => cmd {:?}", client_id, cmd);
-        let client = self.clients.find(client_id);
-        if client.is_none() {
-            warn!("invalid client id: {:?}", client_id);
-            return;
-        }
-        let client = client.unwrap();
-        client.execute_command(cmd);
-    }
-
-    async fn do_run(&mut self) -> ! {
-        info!("server starts");
-        let mut accept_stream = Box::pin(Self::bind_and_accept(self.addr.clone()));
-        loop {
-            tokio::select! {
-                Some(v) = accept_stream.next() => {
-                    self.on_client_created(v.unwrap());
-                }
-                Some((id, cmd)) = self.streams.next() => {
-                    self.handle_command(id, cmd);
-                }
-            }
-        }
-    }
-
-    pub fn run(&mut self) {
+        let id_gen = Arc::new(Mutex::new(IdGen::new()));
         let rt = runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
-        info!("server runs now");
-        rt.block_on(self.do_run())
+        Ok(Self {
+            rt,
+            id_gen,
+            addr: conf.addr.clone(),
+            running: true,
+            // clients: RaxMap::new(),
+        })
     }
 
-    // pub fn run(&mut self) -> io::Result<()> {
-    //     self.rt.block_on(async {
-    //         let listener = TcpListener::bind(self.addr).await?;
-            
-    //     })
-    // }
+    async fn on_client_created(&self, mut stream: TcpStream, id_gen: Arc<Mutex<IdGen>>) {
+        let id = id_gen.lock().await.new_id();
+        if id.is_none() {
+            warn!("too many client");
+            // stream.shutdown().await;
+            // stream will be dropped here and the connection will be closed.
+            return;
+        }
+        let id = id.unwrap();
+        let mut client = Client::new(id, stream);
+        self.rt.spawn(async move {
+            while let Some(cmd) = client.read_command().await {
+                debug!("Got cmd by client({:?}): {:?}", id, cmd);
+                client.execute_command(cmd);
+            }
+            debug!("Client {:?} exits", id);
+            id_gen.lock().await.recycle_id(id);
+        });
+    }
+
+    async fn do_run(&self) -> Result<()> {
+        info!("server starts");
+        // let mut id_gen = Arc::new(Mutex::new(IdGen::new()));
+        let listener = TcpListener::bind(self.addr.clone()).await?;
+        while self.running {
+            match listener.accept().await {
+                Ok((stream, addr)) => {
+                    println!("received on {:?}", addr);
+                    self.on_client_created(stream, self.id_gen.clone()).await;
+                },
+                Err(err) => {
+                    warn!("error on accepting new socket: {:?}", err);
+                },
+            }
+        }
+        Ok(())
+    }
+
+    pub fn run(&self) -> Result<()> {
+        info!("server runs now");
+        self.rt.block_on(self.do_run())
+    }
 }
 
 

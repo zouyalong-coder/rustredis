@@ -12,8 +12,8 @@ async fn main()  {
         let mut buf = vec![0u8; 1024];
         sleep(time::Duration::from_millis(300));
         writeln!(&mut buf, "get {} {}", pid, i);
-        stream.writable().await;
-        stream.try_write(&buf);
+        stream.writable().await.unwrap();
+        stream.try_write(&buf).unwrap();
     }
 
 }
