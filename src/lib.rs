@@ -1,9 +1,10 @@
-pub mod server;
+pub mod client;
+pub mod config;
 pub mod conn;
 pub mod error;
-pub mod config;
-pub mod frame;
-pub mod client;
+pub mod protocol;
+pub mod server;
+pub mod command;
 
 // fn main() {
 //     let conf = Config{ addr: "".to_string(), };

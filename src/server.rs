@@ -1,13 +1,15 @@
-use std::{sync::Arc};
-use tokio::{sync::Mutex, io::AsyncWriteExt};
-use log::{info, debug, warn};
-
+use log::{debug, info, warn};
+use std::sync::Arc;
+use tokio::{io::AsyncWriteExt, sync::Mutex};
 
 use rax::RaxMap;
-use tokio::{runtime::{Runtime, self}, net::{TcpListener, TcpStream}};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    runtime::{self, Runtime},
+};
 
-use crate::{config::Config, frame::Command};
 use crate::client::Client;
+use crate::config::Config;
 use crate::error::Result;
 
 struct IdGen {
@@ -22,10 +24,13 @@ impl IdGen {
     }
 
     fn new_id(&mut self) -> Option<u64> {
-        let id = self.id_slots.first_false_index().and_then(|id| Some(id as u64))?;
+        let id = self
+            .id_slots
+            .first_false_index()
+            .and_then(|id| Some(id as u64))?;
         self.id_slots.set(id as usize, true);
         if id > 1 {
-            return None
+            return None;
         }
         Some(id)
     }
@@ -34,7 +39,6 @@ impl IdGen {
         self.id_slots.set(id as usize, false);
     }
 }
-
 
 pub struct Server {
     rt: Runtime,
@@ -90,10 +94,10 @@ impl Server {
                 Ok((stream, addr)) => {
                     println!("received on {:?}", addr);
                     self.on_client_created(stream, self.id_gen.clone()).await;
-                },
+                }
                 Err(err) => {
                     warn!("error on accepting new socket: {:?}", err);
-                },
+                }
             }
         }
         Ok(())
@@ -104,5 +108,3 @@ impl Server {
         self.rt.block_on(self.do_run())
     }
 }
-
-
