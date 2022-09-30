@@ -4,7 +4,8 @@ pub mod conn;
 pub mod error;
 pub mod protocol;
 pub mod server;
-pub mod command;
+pub mod command_old;
+mod command;
 
 // fn main() {
 //     let conf = Config{ addr: "".to_string(), };

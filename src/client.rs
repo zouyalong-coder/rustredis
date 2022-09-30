@@ -7,7 +7,7 @@ use tokio::{
     net::TcpStream,
 };
 
-use crate::command::Command;
+use crate::command_old::Command;
 
 pub struct Client {
     id: u64,

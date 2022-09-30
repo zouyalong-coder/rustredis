@@ -59,6 +59,8 @@ enum Unit {
     Payload(Vec<u8>),
 }
 
+/// A RawPiece represents a piece of request of RESP.
+/// But in redis, every piece here is represented as robject.
 pub enum RawPiece {
     SimpleString { data: Vec<u8> },
     Error { typ: Vec<u8>, cause: Vec<u8> },
